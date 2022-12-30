@@ -1,0 +1,647 @@
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Demo App: Spatial analysis > Geometry analysis > Geometry calculations</title>
+  
+  <script type="module" src="https://js.arcgis.com/calcite-components/1.0.0-beta.52/calcite.esm.js"></script>
+  <script nomodule="" src="https://js.arcgis.com/calcite-components/1.0.0-beta.52/calcite.js"></script>
+  <link rel="stylesheet" type="text/css" href="https://js.arcgis.com/calcite-components/1.0.0-beta.52/calcite.css" />
+
+  <style>
+    html,
+    body,
+    #viewDiv {
+      padding: 0;
+      margin: 0;
+      height: 100%;
+      width: 100%;
+      font-family: "Avenir Next"
+    }
+
+    #selectElement {
+      display: flex;
+      flex-direction: column;
+      margin: 1rem 0;
+    }
+
+    #toolbox {
+      background-color: white;
+      padding: 1rem;
+    }
+
+    #legend,
+    #result {
+      background-color: white;
+      padding: 0 1rem;
+    }
+
+    #result {
+      width: 360px;
+      position: relative;
+      padding: 20px;
+    }
+
+    #result textarea{
+      width: 100%;
+      white-space: normal;
+      height: 100px;
+      overflow-y: auto;
+    }
+
+    #legend p ,
+    #result textarea{
+      line-height: 20px;
+    }
+
+    .inputGeometries,
+    .resultGeometries {
+      display: inline-block;
+      width: 20px;
+      height: 15px;
+      vertical-align: middle;
+    }
+
+    .inputGeometries {
+      background-color: rgba(150, 150, 150, .5)
+    }
+
+    .resultGeometries {
+      background-color: rgba(150, 130, 220, 0.85);
+    }
+
+    .esri-sketch__panel.esri-sketch__info-panel {
+      display: none;
+    }
+
+    #alert-message {
+      padding: 2px 4px;
+      background-color: #eeeeee;
+    }
+  </style>
+
+  <link rel="stylesheet" href="https://js.arcgis.com/4.25/esri/themes/light/main.css">
+  <script src="https://js.arcgis.com/4.25"></script>
+
+  <script>
+    require([
+      "esri/config",
+      "esri/Map",
+      "esri/views/MapView",
+      "esri/Graphic",
+      "esri/layers/GraphicsLayer",
+      "esri/geometry/Point",
+      "esri/geometry/SpatialReference",
+      "esri/geometry/support/webMercatorUtils",
+      "esri/geometry/geometryEngine",
+      "esri/widgets/Sketch",
+      "esri/layers/FeatureLayer"
+
+    ], function (esriConfig, Map, MapView, Graphic, GraphicsLayer, Point, SpatialReference, webMercatorUtils,
+      geometryEngine, Sketch, FeatureLayer) {
+
+      esriConfig.apiKey = "dn-dGTR-5EHgesyoCKrExaRXEVJ0obfwPiRSXv-HCcCCRSJZWjip-XDm-eED2qD-1d6f6tNlB1BZANepN_AaWzACUssoXUCtcQ2rj5UqeMa83Xzq8Wzk8LeajoRGRipb-NvskWDzPMFelPYpy_rlkg..";
+
+      purple = [150, 130, 220, .85];
+      black = [0, 0, 0];
+      lightGray = [150, 150, 150, .5];
+      darkGray = [50, 50, 50, 255];
+
+      let lastGraphicSelected;
+
+      const map = new Map({
+        basemap: "arcgis-light-gray" //Basemap layer service
+      });
+
+      const view = new MapView({
+        map: map,
+        zoom: 9,
+        center: [-3.582849, 36.705640],
+        container: "viewDiv"
+      });
+ 
+      const featureLayer = new FeatureLayer({
+        url:
+          "https://services9.arcgis.com/RHVPKKiFTONKtxq3/ArcGIS/rest/services/NOAA_METAR_current_wind_speed_direction_v1/FeatureServer/0"
+      });
+      map.add(featureLayer); 
+
+      const graphicsLayer = new GraphicsLayer();
+      map.add(graphicsLayer);
+
+      const resultsLayer = new GraphicsLayer();
+      map.add(resultsLayer);
+      window.resultsLayer = resultsLayer
+
+      const sketch = new Sketch({
+        view: view,
+        container: "sketch",
+        layer: graphicsLayer,
+        updateOnGraphicClick: true,
+        snappingOptions: {
+          enabled: true,
+          featureSources: [{
+            layer: graphicsLayer
+          }]
+        },
+        visibleElements: {
+          selectionTools: {
+            "lasso-selection": false,
+            "rectangle-selection": false,
+          },
+          settingsMenu: false,
+          undoRedoMenu: false
+        }
+      });
+
+      const removeThirdGeometry = (state, tool) => {
+        const numGraphics = sketch.layer.graphics.length;
+        if (numGraphics === 2 || (numGraphics === 1 && getSelectOption() === "buffer")) {
+          if (["intersect", "union"].indexOf(getSelectOption()) !== -1) {
+            graphicsLayer.remove(lastGraphicSelected)
+          } else if (["nearestVertex", "nearestCoordinates"].indexOf(getSelectOption()) !== -1) {
+            let oneRemoved = false;
+            sketch.layer.graphics.forEach(gr => {
+              if (gr.geometry.type !== "point") {
+                graphicsLayer.remove(gr);
+                oneRemoved = true;
+              }
+              if (!oneRemoved) {
+                const arrVal = sketch.layer.graphics.shift();
+                graphicsLayer.remove(arrVal);
+              }
+            });
+          } else {
+            const arrVal = sketch.layer.graphics.shift();
+            graphicsLayer.remove(arrVal);
+          }
+        }
+      };
+
+
+      sketch.watch('activeTool', (newValue, oldValue, property, object) => {
+        const startDrawing = ["point", "polyline", "polygon", "rectangle", "circle"].indexOf(newValue);
+        if (sketch.state === "active" && startDrawing !== -1) {
+          resultsLayer.removeAll();
+          const el = document.querySelector('#result textarea');
+          el.innerHTML = '';
+          const numGraphics = sketch.layer.graphics.length;
+          if (numGraphics == 2 || (numGraphics == 1 && getSelectOption() === "buffer")) {
+            removeThirdGeometry(newValue, sketch.activeTool);
+            showAlert("Draw the shape");
+          }
+        }
+      });
+
+      sketch.on("create", (event, a, b, c) => {
+        // Remove 3rd geometry, only allow two
+        if (event.state === "complete") {
+          if (sketch.layer.graphics.length === 3) {
+            removeThirdGeometry(event.state, event.tool);
+          }
+          // Clear results
+          if (sketch.state === "active" && sketch.activeTool) {
+
+            if (getSelectOption() === "buffer") {
+              graphicsLayer.removeAll();
+            }
+          }
+          event.graphic.symbol = getSymbol(event.graphic.geometry.type, lightGray, darkGray)
+          resultsLayer.removeAll();
+          sketch.complete()
+          sketch.update(event.graphic);
+          lastGraphicSelected = event.graphic;
+          if (sketch.layer.graphics.length >= 1) {
+            document.getElementById("selectElement").classList.remove("esri-hidden")
+          }
+          updateResultsLayer();
+        }
+      });
+
+      sketch.on(["delete"], (event) => {
+        resultsLayer.removeAll();
+      });
+
+      sketch.on(["update", "undo"], onGraphicUpdate);
+
+      function onGraphicUpdate(event) {
+        result = updateResultsLayer();
+        if (event.type === "update" && event.state === "start") {
+          lastGraphicSelected = event.graphics[0];
+        }
+      }
+
+      const operationDropdown = document.querySelector("#selectElement calcite-select");
+
+      view.ui.add(document.querySelector("#toolbox"), "top-right");
+      view.ui.add(document.querySelector("#legend"), "bottom-right");
+      view.ui.add(document.querySelector("#result"), "bottom-left");
+
+      function showAlert(msg) {
+        document.querySelector('#alert-message').innerHTML = msg;
+      };
+
+      operationDropdown.addEventListener("click", (event) => {
+        if (sketch.layer.graphics.length === 0) {
+          showAlert("Draw two shapes");
+        }
+      })
+
+      function clearAll() {
+        resultsLayer.removeAll();
+        graphicsLayer.removeAll();
+      }
+
+      operationDropdown.addEventListener("calciteSelectChange", (event) => {
+        const operation = getSelectedOperation();
+        addDefaultGeometries(operation);
+      });
+
+      function getSelectOption() {
+        if (document.querySelector("#selectElement [selected]")) {
+          return document.querySelector("#selectElement [selected]").value;
+        }
+        return null;
+      }
+
+      const updateResultsLayer = () => {
+        const el = document.querySelector('#result textarea');
+        el.innerHTML = '';
+        operation = getSelectOption()
+        if (operation) {
+          return performGeometryCalculations(operation);
+        }
+      };
+
+      function performGeometryCalculations(operation) {
+        resultsLayer.removeAll();
+        const hasGraphics = sketch.layer.graphics.length;
+        let result;
+
+        switch (operation) {
+          case "buffer":
+            result = [];
+            sketch.layer.graphics.forEach((g, i) => {
+              if (i === sketch.layer.graphics.length - 1) {
+                result.push(createBuffer(g.geometry));
+              } else {
+                graphicsLayer.graphics.remove(g);
+              }
+            });
+            showAlert(hasGraphics ? "Move the shape" : "Draw a shape");
+            break;
+          case "intersect":
+            showAlert(hasGraphics ? "Move the shapes" : "Draw two shapes");
+            result = findIntersect();
+            break;
+          case "union":
+            showAlert(hasGraphics ? "Move the shapes" : "Draw two shapes");
+            result = createUnion();
+            break;
+          case "nearestVertex":
+            showAlert(hasGraphics ? "Move the shapes" : "Draw a shape and a polygon");
+            result = genericFindNearest("nearestVertex");
+            break;
+          case "nearestCoordinates":
+            showAlert(hasGraphics ? "Move the shapes" : "Draw a shape and a polygon");
+            result = genericFindNearest("nearestCoordinate");
+            break;
+        }
+        const el = document.querySelector('#result textarea');
+        try{
+          if(result.length){
+            let output = '';
+            result.forEach(e => {
+              output += JSON.stringify(e.geometry.toJSON());
+            })
+            el.innerHTML = output;
+          }else{
+              el.innerHTML = JSON.stringify(result.geometry.toJSON());
+          }
+        }catch(e){
+          // console.err("Error: ", e);
+          el.innerHTML = '';
+        }
+        
+        return result;
+      }
+
+      function createBuffer(geometry) {
+        const bufferGeometry = geometryEngine.geodesicBuffer(geometry, 4000, "meters");
+        const bufferGraphic = new Graphic({
+          geometry: bufferGeometry,
+          symbol: {
+            type: "simple-fill",
+            color: purple
+          }
+        });
+        resultsLayer.add(bufferGraphic);
+        return bufferGraphic;
+      }
+
+      function getGraphics(layer) {
+        const graphics = [];
+        layer.graphics.forEach(gr => {
+          graphics.push(gr)
+        });
+        return graphics;
+      }
+
+      function findIntersect() {
+        if (sketch.layer.graphics.length == 2) {
+          const [graphic1, graphic2] = getGraphics(sketch.layer);
+          let intersectGeom = geometryEngine.intersect(graphic1.geometry, graphic2.geometry);
+          if (intersectGeom) {
+            const intersectionGraphic = new Graphic({
+              geometry: intersectGeom,
+              symbol: getSymbol(intersectGeom.type, purple, purple)
+            });
+            resultsLayer.add(intersectionGraphic);
+            return intersectionGraphic;
+          }
+        } else {
+          showAlert("Draw two shapes");
+        }
+        return null;
+      }
+
+      function createUnion(bufferGeometry) {
+        if (sketch.layer.graphics.length == 2) {
+          const [graphic1, graphic2] = getGraphics(sketch.layer);
+          const unionGeom = geometryEngine.union(graphic1.geometry, graphic2.geometry);
+          const unionGraphic = new Graphic({
+            geometry: unionGeom,
+            symbol: getSymbol(unionGeom.type, purple, black)
+          });
+          resultsLayer.add(unionGraphic);
+          return unionGraphic;
+        }
+      }
+
+      function genericFindNearest(type) {
+        let geometry, point;
+        if (sketch.layer.graphics.length == 2) {
+          const [graphic1, graphic2] = getGraphics(sketch.layer);
+
+          if (graphic1.geometry.type === "point" && graphic2.geometry.type !== "point") {
+            point = graphic1.geometry;
+            geometry = graphic2.geometry
+          } else if (graphic2.geometry.type === "point") {
+            point = graphic2.geometry;
+            geometry = graphic1.geometry
+          } else {
+            showAlert("Draw a shape and a point.");
+            return null
+          }
+
+          const nearestGeometry = geometryEngine[type](geometry, point);
+
+          const nearestGraphic = new Graphic({
+            geometry: {
+              type: "point",
+              ...nearestGeometry.coordinate.toJSON()
+            },
+            symbol: getSymbol("point", purple, black)
+          });
+          resultsLayer.add(nearestGraphic);
+          return nearestGraphic;
+        }
+      }
+
+      function getSymbol(geometryType, color, outlineColor, isDefault) {
+        let type;
+        switch (geometryType) {
+          case "point":
+            type = "simple-marker"
+            break;
+          case "polyline":
+            type = "simple-line"
+            break;
+          case "polygon":
+            type = "simple-fill"
+            break;
+        }
+        const symbol = {
+          type,
+          width: 4,
+          color: (isDefault) ? darkGray : color,
+          outline: {
+            color: outlineColor,
+            width: 1
+          }
+        }
+        return symbol;
+      }
+
+      function addDefaultGeometries(operation) {
+
+        clearAll()
+
+        // Adding default geometries and interesection
+        const defaultPolygonGeometry = webMercatorUtils.geographicToWebMercator({
+          type: "polygon",
+          spatialReference: {
+            wkid: 4326
+          },
+          rings: [
+            [
+              [-3.915294, 36.795441],
+              [-3.568615, 36.795441],
+              [-3.568615, 36.636824],
+              [-3.915294, 36.636824],
+              [-3.915294, 36.795441]
+            ]
+          ]
+        });
+
+        const defaultPolygon = {
+          geometry: defaultPolygonGeometry,
+          symbol: getSymbol("polygon", lightGray, darkGray)
+        };
+
+
+        const defaultCircleGeometry = webMercatorUtils.geographicToWebMercator({
+          type: "polygon",
+          spatialReference: {
+            wkid: 4326
+          },
+          rings: [
+            [
+              [-3.287157, 36.718305],
+              [-3.288187, 36.702560],
+              [-3.291263, 36.686984],
+              [-3.296354, 36.671748],
+              [-3.303402, 36.657020],
+              [-3.312331, 36.642960],
+              [-3.323043, 36.629724],
+              [-3.335420, 36.617457],
+              [-3.349327, 36.606294],
+              [-3.364611, 36.596358],
+              [-3.381106, 36.587757],
+              [-3.398630, 36.580588],
+              [-3.416991, 36.574927],
+              [-3.435989, 36.570839],
+              [-3.455414, 36.568368],
+              [-3.475055, 36.567542],
+              [-3.494696, 36.568368],
+              [-3.514121, 36.570839],
+              [-3.533118, 36.574927],
+              [-3.551480, 36.580588],
+              [-3.569004, 36.587757],
+              [-3.585498, 36.596358],
+              [-3.600783, 36.606294],
+              [-3.614690, 36.617457],
+              [-3.627067, 36.629724],
+              [-3.637779, 36.642960],
+              [-3.646708, 36.657020],
+              [-3.653756, 36.671748],
+              [-3.658846, 36.686984],
+              [-3.661923, 36.702560],
+              [-3.662952, 36.718305],
+              [-3.661923, 36.734047],
+              [-3.658846, 36.749613],
+              [-3.653756, 36.764834],
+              [-3.646708, 36.779542],
+              [-3.637779, 36.793576],
+              [-3.627067, 36.806784],
+              [-3.614690, 36.819021],
+              [-3.600783, 36.830153],
+              [-3.585498, 36.840059],
+              [-3.569004, 36.848631],
+              [-3.551480, 36.855776],
+              [-3.533118, 36.861416],
+              [-3.514121, 36.865488],
+              [-3.494696, 36.867950],
+              [-3.475055, 36.868773],
+              [-3.455414, 36.867950],
+              [-3.435989, 36.865488],
+              [-3.416991, 36.861416],
+              [-3.398630, 36.855776],
+              [-3.381106, 36.848631],
+              [-3.364611, 36.840059],
+              [-3.349327, 36.830153],
+              [-3.335420, 36.819021],
+              [-3.323043, 36.806784],
+              [-3.312331, 36.793576],
+              [-3.303402, 36.779542],
+              [-3.296354, 36.764834],
+              [-3.291263, 36.749613],
+              [-3.288187, 36.734047],
+              [-3.287157, 36.718305],
+              [-3.287157, 36.718305]
+            ]
+          ]
+        });
+
+
+        const defaultCircle = {
+          geometry: defaultCircleGeometry,
+          symbol: getSymbol("polygon", lightGray, darkGray)
+        };
+
+        const defaultPointGeometry = webMercatorUtils.geographicToWebMercator({
+          type: "point",
+          spatialReference: {
+            wkid: 4326
+          },
+          x: -3.612734,
+          y: 36.838338
+        });
+
+        const defaultPoint = {
+          geometry: defaultPointGeometry,
+          symbol: getSymbol("point", lightGray, darkGray)
+        };
+
+        if (["intersect", "union"].indexOf(operation) !== -1) {
+          graphicsLayer.add(defaultPolygon);
+          graphicsLayer.add(defaultCircle);
+        } else if (["nearestVertex", "nearestCoordinates"].indexOf(operation) !== -1) {
+          graphicsLayer.add(defaultPoint);
+          graphicsLayer.add(defaultPolygon);
+        } else if (operation === "buffer") {
+          graphicsLayer.add(defaultPoint);
+        }
+
+        updateResultsLayer();
+
+        view.when(() => {
+          lastGraphicSelected = sketch.layer.graphics.getItemAt(0);
+
+          sketch.update(lastGraphicSelected);
+
+          //view.constraints.minZoom = view.constraints.maxZoom = view.zoom;
+
+          // Hide basemap labels
+          const refLayer = view.map.allLayers.find(layer => layer.url && layer.url.indexOf("Labels") !== -1);
+          refLayer.opacity = 0;
+        });
+
+
+      };
+
+      function getSelectedOperation() {
+        return document.querySelector("#selectElement [selected]").value;
+      }
+
+      // Disable zoom-box
+      /*view.on("drag", ["Shift"], function (event) {
+        if (sketch.state !== "active") {
+          event.stopPropagation();
+        }
+      });
+
+      view.on("drag", function (event) {
+        event.stopPropagation();
+      }, -1);*/
+
+      // Workaround to fix geometry selection when the result of union operation is on top
+      view.on("click", ({x, y}) => {
+        view.hitTest({x, y})
+          .then(response => {
+            const gr = response.results.find(layer => layer.graphic.layer.id === "sketch-layer");
+            if (gr) {
+              sketch.update(gr.graphic)
+            }
+          });
+      });
+
+      addDefaultGeometries("intersect");
+    });
+  </script>
+</head>
+
+<body>
+  <div id="viewDiv"></div>
+
+  <div id="toolbox">
+    <div id="sketch"></div>
+
+    <div id="selectElement">
+      <calcite-select scale="m" width="full">
+        <calcite-option value=""> Select operation </calcite-option>
+        <calcite-option value="buffer" id="bufferOpt">Buffer</calcite-option>
+        <calcite-option value="intersect" id="intersectOpt" selected>Intersect</calcite-option>
+        <calcite-option value="union" id="unionOpt">Union</calcite-option>
+        <calcite-option value="nearestVertex" id="nearestVertexOpt">Nearest vertex</calcite-option>
+        <calcite-option value="nearestCoordinates" id="nearestCoordinatesOpt">Nearest coordinate</calcite-option>
+      </calcite-select>
+    </div>
+    <div id="alert" style="display: block;">
+      <div id="alert-title"></div>
+      <div id="alert-message">Draw two shapes.</div>
+    </div>
+  </div>
+
+  <div id="result">
+    <textarea id="geometry">
+    </textarea>
+  </div>
+  <div id="legend">
+    <p><span class="inputGeometries"></span> Input geometries</p>
+    <p><span class="resultGeometries"></span> Result geometry</p>
+  </div>
+</body>
+
+</html>

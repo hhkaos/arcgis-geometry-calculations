@@ -1,6 +1,8 @@
 # arcgis-geometry-calculations
 
-[This tool](https://hhkaos.github.io/arcgis-geometry-calculations/) allow you to easily grab the geometry resulting from a spatial geometry calculation (buffers, intersections, unions, ...). It was made initially with the intention to help you do spatial queries within ArcGIS feature services as shown in the [following video](https://youtu.be/dkEt_dz8KZA).
+[This tool](https://hhkaos.github.io/arcgis-geometry-calculations/) allow you to easily grab the geometry resulting from a spatial geometry calculation (buffers, intersections, unions, ...). It was made to provide an additional<sup>1</sup> way to spatial queries within ArcGIS feature services as shown in the [following video](https://youtu.be/dkEt_dz8KZA).
+
+> **(1)** Feature services have a ["distance" parameter](https://developers.arcgis.com/documentation/mapping-apis-and-services/data-hosting/services/feature-service/#distance) that allow you request the service to make the spatial intersect with the buffer on the backend in your behalf.
 
 ## About the demo
 
